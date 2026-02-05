@@ -1,0 +1,7 @@
+venv
+__pycache__
+.git
+*.mp3
+.env
+tests
+payload.json
