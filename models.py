@@ -2,11 +2,7 @@ from transformers import pipeline
 import librosa
 import numpy as np
 
-classifier = pipeline(
-    "audio-classification",
-    model="./model",
-    device=-1
-)
+classifier = pipeline("audio-classification", model="Hemgg/Deepfake-audio-detection",device=-1)
 
 def detect_audio(y: np.ndarray) -> tuple[str, float, str]:
     """
@@ -68,4 +64,5 @@ def detect_audio(y: np.ndarray) -> tuple[str, float, str]:
 
     except Exception as e:
         # Fallback on error
+
         return "HUMAN", 0.50, f"Analysis error: {str(e)}. Treated as human."
