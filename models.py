@@ -2,60 +2,92 @@ from transformers import pipeline
 import librosa
 import numpy as np
 
-classifier = pipeline("audio-classification", model="Hemgg/Deepfake-audio-detection",device=-1)
+# Load model once at startup (important for performance)
+classifier = pipeline(
+    "audio-classification",
+    model="Hemgg/Deepfake-audio-detection",
+    device=-1  # CPU (use 0 if GPU available)
+)
+
 
 def detect_audio(y: np.ndarray) -> tuple[str, float, str]:
     """
     Detect if audio is AI_GENERATED or HUMAN.
-    Returns: classification, confidenceScore (0-1), explanation
+
+    Returns:
+    - classification (str)
+    - confidenceScore (float 0-1)
+    - explanation (str)
     """
+
     try:
-        result = classifier(y)
-        if not result:
+        # Send audio correctly to HuggingFace
+        result = classifier({
+            "array": y,
+            "sampling_rate": 16000
+        })
+
+        # Safety check
+        if not result or len(result) == 0:
             return "HUMAN", 0.50, "Insufficient audio features detected."
 
-        # Take top prediction
+        # Get top prediction
         top = result[0]
-        label_lower = top['label'].lower()
-        top_score = top['score']
+        label = top["label"].lower()
+        score = float(top["score"])
 
-        # Flexible mapping for common labels
-        if any(word in label_lower for word in ['ai', 'fake', 'synthetic', 'aivoice']):
+        # Label mapping
+        if any(word in label for word in ["ai", "fake", "synthetic", "deepfake"]):
             classification = "AI_GENERATED"
-            confidence = round(top_score, 3)
         else:
             classification = "HUMAN"
-            confidence = round(top_score, 3)
 
-        # Feature-based explanation (judge-friendly)
-        flatness = librosa.feature.spectral_flatness(y=y).mean()
+        confidence = round(score, 3)
+
+        # -------------------------
+        # Feature-based analysis
+        # -------------------------
+
+        # Spectral flatness (robotic vs natural)
+        flatness = float(librosa.feature.spectral_flatness(y=y).mean())
+
+        # Pitch variation
         pitch = librosa.yin(y, fmin=75, fmax=300)
-        pitch_std = np.std(pitch) if len(pitch) > 0 else 0.0
+        pitch = pitch[~np.isnan(pitch)]  # remove NaN values
+
+        pitch_std = float(np.std(pitch)) if len(pitch) > 0 else 0.0
 
         cues = []
+
         if flatness > 0.5:
-            cues.append("unnatural high spectral flatness (robotic)")
+            cues.append("unnatural spectral flatness (robotic tone)")
         else:
             cues.append("natural spectral variation")
-        if pitch_std < 10:
-            cues.append("unnatural pitch consistency")
-        else:
-            cues.append("natural pitch variation")
 
-        # Decide feature-based tendency
-        feature_vote = "AI_GENERATED" if (flatness > 0.5 and pitch_std < 10) else "HUMAN"
+        if pitch_std < 10:
+            cues.append("low pitch variation (synthetic pattern)")
+        else:
+            cues.append("normal pitch variation")
+
+        # Feature vote
+        feature_vote = (
+            "AI_GENERATED"
+            if flatness > 0.5 and pitch_std < 10
+            else "HUMAN"
+        )
 
         cues_text = " and ".join(cues)
 
+        # Explanation logic
         if feature_vote == classification:
             explanation = (
-                f"{cues_text}, which aligns with the model prediction "
+                f"{cues_text}, supporting the model prediction "
                 f"of {classification.lower()} voice."
             )
         else:
             explanation = (
-                f"{cues_text}. However, the deep learning model detected "
-                f"patterns consistent with {classification.lower()} voice."
+                f"{cues_text}. However, the deep learning model "
+                f"detected patterns of {classification.lower()} voice."
             )
 
         explanation = explanation.capitalize()
@@ -63,6 +95,10 @@ def detect_audio(y: np.ndarray) -> tuple[str, float, str]:
         return classification, confidence, explanation
 
     except Exception as e:
-        # Fallback on error
 
-        return "HUMAN", 0.50, f"Analysis error: {str(e)}. Treated as human."
+        # Fallback protection
+        return (
+            "HUMAN",
+            0.50,
+            f"Audio analysis failed: {str(e)}. Defaulted to human voice."
+        )
